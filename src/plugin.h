@@ -93,7 +93,7 @@ private:
 
         struct
         {
-            uint32_t points;
+            uint32_t kills;
             const char* message;
         } streaks[7] {  // TODO
             {3, "Dominating"},
