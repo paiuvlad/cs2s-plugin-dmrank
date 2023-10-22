@@ -1,6 +1,6 @@
 # The name of the plugin. Automatically made available as a compiler definition
 # in `CMakeLists.txt` via PLUGIN_NAME=${plugin_NAME}.
-set(plugin_NAME "cs2s-plugin")
+set(plugin_NAME "cs2s-plugin-dmrank")
 
 # By default, sources included in the `plugin` target are determined by
 # recursively globbing for `*.cpp`. If this is insufficient, you can add your
