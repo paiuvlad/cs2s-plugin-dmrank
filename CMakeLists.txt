@@ -24,6 +24,7 @@ if(LINUX)
     target_compile_definitions(plugin PRIVATE stricmp=strcasecmp _stricmp=strcasecmp _snprintf=snprintf _vsnprintf=vsnprintf _alloca=alloca)
     target_compile_options(plugin PRIVATE -fPIC -fno-exceptions -fno-rtti -msse -fno-strict-aliasing)
 else()
+    target_compile_definitions(plugin PRIVATE NOMINMAX)
     message(WARNING "plugin is not configured for this platform!")
 endif()
 

@@ -1,6 +1,7 @@
 #include "plugin.h"
 
 #include <string>
+#include <algorithm>
 
 #include <Color.h>
 
@@ -21,7 +22,6 @@ Plugin::Plugin(LoggingChannelID_t log)
     : log(log)
     , libraries(log)
     , events(log)
-    , players(ABSOLUTE_PLAYER_LIMIT)
 {
 }
 
@@ -89,6 +89,11 @@ void Plugin::PostPlayer(Player& player)
 
 void Plugin::FireGameEvent(IGameEvent *event)
 {
+    if (!this->config.enabled)
+    {
+        return;
+    }
+
     switch (event->GetID())
     {
     case 8:
@@ -123,6 +128,7 @@ void Plugin::PlayerConnect(IGameEvent* event)
     else
     {
         player_connected = true;
+        this->players_count += 1;
     }
 
     // Overwrite player information
@@ -160,6 +166,10 @@ void Plugin::PlayerDisconnect(IGameEvent* event)
         Log_Warning(this->log, LOG_PREFIX "player_disconnect: slot %d already disconnected, skipping\n", player_slot);
         return;
     }
+    else
+    {
+        this->players_count -= 1;
+    }
 
     // Reset values for debugging and to keep memory profile low (probably
     // unnecessary), but better safe than sorry.
@@ -168,41 +178,112 @@ void Plugin::PlayerDisconnect(IGameEvent* event)
 
 void Plugin::PlayerDeath(IGameEvent* event)
 {
-    int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
-    auto& [player_connected, player] = this->players[player_slot];
-    if (!player_connected)
+    int target_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    auto& [target_connect, target] = this->players[target_slot];
+    if (!target_connect)
     {
-        Log_Warning(this->log, LOG_PREFIX "player_death: slot %d disconnected, continuing\n", player_slot);
+        Log_Warning(this->log, LOG_PREFIX "player_death: target slot %d disconnected, continuing\n", target_slot);
     }
 
-    int attacker_player_slot = event->GetInt(attacker_symbol) % ABSOLUTE_PLAYER_LIMIT;
-    if (attacker_player_slot == 63)  // Suicide
+    int attacker_slot = event->GetInt(attacker_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    if (attacker_slot == 63)  // Suicide
     {
-        // TODO
-        this->client_print_all(HUD_PRINTTALK, LOG_PREFIX "suicide", nullptr, nullptr, nullptr, nullptr);
+        target.session.deaths += 1;
+        target.points = std::max(target.points - this->config.points_suicide_deduction, 0);
         return;
     }
 
-    auto& [attacker_player_connected, attacker_player] = this->players[attacker_player_slot];
-    if (!attacker_player_connected)
+    auto& [attacker_connected, attacker] = this->players[attacker_slot];
+    if (!attacker_connected)
     {
-        Log_Warning(this->log, LOG_PREFIX "player_death: attacker slot %d disconnected, continuing\n", attacker_player_slot);
+        Log_Warning(this->log, LOG_PREFIX "player_death: attacker slot %d disconnected, continuing\n", attacker_slot);
     }
 
-    player.life.kills = 0;
-    player.session.deaths += 1;
-    attacker_player.life.kills += 1;
-    attacker_player.session.kills += 1;
+    // Completely ignore when bots kill each other
+    if (target.bot && attacker.bot)
+    {
+        return;
+    }
+
+    // Reused checks
+    bool headshot = event->GetInt(hitgroup_symbol) == HITGROUP_HEAD;
+    bool unranked = attacker.session.kills < this->config.rank_unranked_kills;
+
+    // Reset life stats for player who died and add death
+    target.life = {};
+    target.session.deaths += 1;
+
+    // Add kill stats to attacker
+    attacker.life.kills += 1;
+    attacker.session.kills += 1;
+    if (headshot)
+    {
+        attacker.session.kills_headshot += 1;
+    }
+
+    float points;
+
+    // If the player killed a bot, they should receive a fixed number of points
+    if (target.bot)
+    {
+        attacker.points += std::ceil(this->config.points_kill_bot);
+        return;
+    }
+
+    // If the player was killed by a bot, they should lose a fixed number of points
+    if (attacker.bot)
+    {
+        attacker.points += std::ceil(this->config.points_kill_bot);
+        return;
+    }
+
+    // If they kill another player, use the rating system
+    else
+    {
+        // Attacker receives player.points/attacker_player.points * points_to_kill_player
+        float factor = static_cast<float>(target.points) / static_cast<float>(std::max(attacker.points, 1));
+        points = static_cast<float>(factor * this->config.points_kill_player);
+
+        // Bonuses and multiplier for kill types
+        if (headshot)
+        {
+            points += this->config.points_headshot_bonus;
+        }
+        bool knife = strncmp(event->GetString(weapon_symbol), "knife", 5) == 0;  // "knife" or "knife_t"
+        if (knife)
+        {
+            points *= this->config.points_knife_multiplier;
+        }
+    }
+
+    // Adjust points for player count
+    if (this->players_count < this->config.points_low_player_count)
+    {
+        points *= this->config.points_low_player_count_multiplier;
+    }
+
+    // Clamp the total number of points gained within the bounds
+    points = std::clamp(points, this->config.points_gain_minimum, this->config.points_gain_maximum);
+
+    // Apply the points to the target
+    float points_lost_exact = points * this->config.points_death_multiplier;
+    Points points_lost = std::ceil(points_lost_exact);  // Avoids an additional static_cast
+    target.points = std::max(target.points - points_lost, 0);
+
+    // Apply points to attacker
+    float points_gained_exact = points;
+    if (unranked)
+    {
+        points_gained_exact *= this->config.points_unranked_multiplier;
+    }
+    Points points_gained = std::ceil(points_gained);
+    attacker.points += points_gained;
 
     std::string message = (
         LOG_PREFIX " " +
-        attacker_player.name + " killed " +
-        player.name + " (" +
-        std::to_string(attacker_player.life.kills) + " " +
-        std::to_string(attacker_player.session.kills) + "/" +
-        std::to_string(attacker_player.session.deaths) + ")\n"
+        attacker.name + " +" + std::to_string(points_gained) +
+        target.name + " -" + std::to_string(points_lost)
     );
-
     this->client_print_all(HUD_PRINTTALK, message.c_str(), nullptr, nullptr, nullptr, nullptr);
 }
 
