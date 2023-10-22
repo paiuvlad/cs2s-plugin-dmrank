@@ -7,7 +7,7 @@ See [cs2s-plugin](https://github.com/noahbkim/cs2s-plugin) for the repository te
 
 - [x] Player tracking
 - [ ] Points calculation (halfway done, needs debug)
-- [ ] Chat send tools (and upstream)
+- [ ] Chat send tools (halfway done)
 - [ ] Send messages for kills
 - [ ] Convars for settings
 - [ ] Kill streaks

@@ -5,8 +5,6 @@
 
 #include <Color.h>
 
-#include <cs2s/common/macro.h>
-
 #define LOG_PREFIX "[" STR(PLUGIN_NAME) "] "
 
 // Set up Source 2 logging. Provides macros like `Log_Msg`, `Log_Warning`, and
@@ -22,6 +20,7 @@ Plugin::Plugin(LoggingChannelID_t log)
     : log(log)
     , libraries(log)
     , events(log)
+    , print(log, &this->libraries)
 {
 }
 
@@ -44,17 +43,9 @@ bool Plugin::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool l
         return false;
     }
 
-    cs2s::plugin::service::Library server_library;
-    if (!this->libraries.Resolve(GAME_BIN_DIRECTORY, "server", &server_library))
+    if (!this->print.Load(id, ismm, late))
     {
-        ismm->Format(error, maxlen, "failed to resolve server library");
-        return false;
-    }
-
-    this->client_print_all = server_library.Match(UTIL_ClientPrintAllPattern);
-    if (!this->client_print_all)
-    {
-        ismm->Format(error, maxlen, "failed to locate UTIL_ClientPrintAllPattern");
+        ismm->Format(error, maxlen, "failed to load print service");
         return false;
     }
 
@@ -291,4 +282,6 @@ void Plugin::WeaponFire(IGameEvent* event)
 {
     int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
     auto& [player_connected, player] = this->players[player_slot];
+
+    this->print.Print(HUD_PRINTTALK, "weapon_fire; %d %s!\n", player_slot, player.name.c_str());
 }

@@ -14,7 +14,8 @@
 #include <cs2s/plugin/service/library.h>
 #include <cs2s/plugin/service/event.h>
 
-#include "hooks.h"
+#include "events.h"
+#include "printer.h"
 
 // This type must be signed or else 0 clamp checks won't work, e.g. std::max(points - x, 0)
 using Points = int32_t;
@@ -58,11 +59,12 @@ class Plugin final : public ISmmPlugin, public IMetamodListener, public IGameEve
 {
 private:
     LoggingChannelID_t log;
+    ISmmAPI* metamod{nullptr};
+
+    // Services
     cs2s::plugin::service::PluginLibraryService libraries;
     cs2s::plugin::service::PluginEventService events;
-
-    // Derived
-    ISmmAPI* metamod{nullptr};
+    PluginPrinterService print;
 
     // Reversed
     decltype(UTIL_ClientPrintAll)* client_print_all{nullptr};
