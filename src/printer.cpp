@@ -37,14 +37,14 @@ bool PluginPrinterService::Load(PluginId id, ISmmAPI* ismm, bool late)
         return false;
     }
 
-    this->client_print = server_library.Match(UTIL_ClientPrintAllPattern);
+    this->client_print = server_library.Resolve(ClientPrintPattern);
     if (!this->client_print)
     {
         Log_Error(this->log, LOG_PREFIX "failed to locate ClientPrint\n");
         return false;
     }
 
-    this->client_print_all = server_library.Match(UTIL_ClientPrintAllPattern);
+    this->client_print_all = server_library.Resolve(UTIL_ClientPrintAllPattern);
     if (!this->client_print_all)
     {
         Log_Error(this->log, LOG_PREFIX "failed to locate UTIL_ClientPrintAll\n");

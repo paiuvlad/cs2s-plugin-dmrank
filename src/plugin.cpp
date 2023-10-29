@@ -14,15 +14,19 @@ DEFINE_LOGGING_CHANNEL_NO_TAGS(LOG_CS2S, STR(CS2S_PLUGIN_NAME), 0, LV_MAX, Color
 
 // A static instance of the plugin loaded by Metamod.
 Plugin g_Plugin(LOG_CS2S);
-PL_EXPOSURE_FUNC(Plugin, g_Plugin);
+PLUGIN_EXPOSE(Plugin, g_Plugin);
 
 Plugin::Plugin(LoggingChannelID_t log)
     : log(log)
     , libraries(log)
     , events(log)
+    , http(log)
     , print(log, &this->libraries)
 {
 }
+
+SH_DECL_HOOK0_void(IServerGameDLL, GameServerSteamAPIActivated, SH_NOATTRIB, 0);
+SH_DECL_HOOK0_void(IServerGameDLL, GameServerSteamAPIDeactivated, SH_NOATTRIB, 0);
 
 // Called when the plugin is loaded by Metamod. You can test this by running
 // `meta load addons/cs2s-plugin` (interpolating the actual generated plugin
@@ -49,6 +53,17 @@ bool Plugin::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool l
         return false;
     }
 
+    if (!this->http.Load(id, ismm, late))
+    {
+        ismm->Format(error, maxlen, "failed to load http service");
+        return false;
+    }
+
+    PLUGIN_SAVEVARS();
+    GET_V_IFACE_ANY(GetServerFactory, g_pSource2Server, ISource2Server, SOURCE2SERVER_INTERFACE_VERSION);
+    SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIActivated, false);
+    SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIDeactivated, false);
+
     this->events.Subscribe("player_connect", this);
     this->events.Subscribe("player_disconnect", this);
     this->events.Subscribe("player_info", this);
@@ -64,13 +79,40 @@ bool Plugin::Unload(char* error, size_t maxlen)
 {
     this->libraries.Unload();
     this->events.Unload();
+    this->http.Unload();
+    this->print.Unload();
 
+    SH_REMOVE_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIActivated, false);
+    SH_REMOVE_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIDeactivated, false);
+
+    Log_Msg(this->log, LOG_PREFIX "Finished unloading\n");
     return true;
 }
 
 void Plugin::GetPlayer(Player& player)
 {
-    // TODO
+    if (player.bot)
+    {
+        return;
+    }
+
+    ISteamHTTP* steam_http = this->http.Get();
+    if (steam_http == nullptr) {
+        Log_Error(this->log, LOG_PREFIX "Cannot request player, Steam API not activated!\n");
+        return;
+    }
+
+    HTTPRequestHandle request = steam_http->CreateHTTPRequest(k_EHTTPMethodGET, "https://google.com");
+    SteamAPICall_t call;
+    steam_http->SendHTTPRequest(request, &call);
+    auto callback = std::make_unique<CCallResult<Plugin, HTTPRequestCompleted_t>>();
+    callback->Set(call, this, &Plugin::HandleGetPlayer);
+    this->requests.emplace_back(std::move(callback));
+}
+
+void Plugin::HandleGetPlayer(HTTPRequestCompleted_t* response, bool failed)
+{
+    Log_Msg(this->log, LOG_PREFIX "Got response! %s\n", failed ? "failed" : "succeeded");
 }
 
 void Plugin::PostPlayer(Player& player)
@@ -109,7 +151,7 @@ void Plugin::FireGameEvent(IGameEvent *event)
 
 void Plugin::PlayerConnect(IGameEvent* event)
 {
-    int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int player_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [player_connected, player] = this->players[player_slot];
     if (player_connected)
     {
@@ -133,7 +175,7 @@ void Plugin::PlayerConnect(IGameEvent* event)
 
 void Plugin::PlayerInfo(IGameEvent* event)
 {
-    int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int player_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [player_connected, player] = this->players[player_slot];
     if (!player_connected)
     {
@@ -150,7 +192,7 @@ void Plugin::PlayerInfo(IGameEvent* event)
 
 void Plugin::PlayerDisconnect(IGameEvent* event)
 {
-    int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int player_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [player_connected, player] = this->players[player_slot];
     if (!player_connected)
     {
@@ -169,14 +211,14 @@ void Plugin::PlayerDisconnect(IGameEvent* event)
 
 void Plugin::PlayerDeath(IGameEvent* event)
 {
-    int target_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int target_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [target_connect, target] = this->players[target_slot];
     if (!target_connect)
     {
         Log_Warning(this->log, LOG_PREFIX "player_death: target slot %d disconnected, continuing\n", target_slot);
     }
 
-    int attacker_slot = event->GetInt(attacker_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int attacker_slot = event->GetPlayerSlot(attacker_symbol).Get();
     if (attacker_slot == 63)  // Suicide
     {
         target.session.deaths += 1;
@@ -267,7 +309,7 @@ void Plugin::PlayerDeath(IGameEvent* event)
     {
         points_gained_exact *= this->config.points_unranked_multiplier;
     }
-    Points points_gained = std::ceil(points_gained);
+    Points points_gained = std::ceil(points_gained_exact);
     attacker.points += points_gained;
 
     std::string message = (
@@ -275,13 +317,32 @@ void Plugin::PlayerDeath(IGameEvent* event)
         attacker.name + " +" + std::to_string(points_gained) +
         target.name + " -" + std::to_string(points_lost)
     );
-    this->client_print_all(HUD_PRINTTALK, message.c_str(), nullptr, nullptr, nullptr, nullptr);
 }
+
+struct RecipientFilter : public IRecipientFilter
+{
+    std::vector<int> player_slots;
+
+    [[nodiscard]] bool IsReliable() const override { return true; };
+    [[nodiscard]] bool IsInitMessage() const override { return false; };
+
+    [[nodiscard]] int	GetRecipientCount() const override { return this->player_slots.size(); };
+    [[nodiscard]] CPlayerSlot GetRecipientIndex(int slot) const override { return this->player_slots[slot]; };
+};
 
 void Plugin::WeaponFire(IGameEvent* event)
 {
-    int player_slot = event->GetInt(userid_symbol) % ABSOLUTE_PLAYER_LIMIT;
+    int player_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [player_connected, player] = this->players[player_slot];
 
-    this->print.Print(HUD_PRINTTALK, "weapon_fire; %d %s!\n", player_slot, player.name.c_str());
+    auto controller = event->GetPlayerController(userid_symbol);
+    auto pawn = event->GetPlayerPawn(userid_symbol);
+    Log_Msg(this->log, LOG_PREFIX "Fire weapon! %p %p\n", controller, pawn);
+
+    RecipientFilter rf{};
+    rf.player_slots.emplace_back(player_slot);
+
+    this->print.client_print_all(HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
+    this->print.client_print(controller, HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
+    this->print.client_print(pawn, HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
 }

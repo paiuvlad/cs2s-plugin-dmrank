@@ -21,13 +21,13 @@
 
 // vendor/hl2sdk/game/server/util.h
 void ClientPrint(
-    void* player,
+    CEntityInstance* player,
     int msg_dest,
     const char* msg_name,
-    const char* param1 = NULL,
-    const char* param2 = NULL,
-    const char* param3 = NULL,
-    const char* param4 = NULL
+    const char* param1 = nullptr,
+    const char* param2 = nullptr,
+    const char* param3 = nullptr,
+    const char* param4 = nullptr
 );
 
 void UTIL_ClientPrintAll(
@@ -58,8 +58,11 @@ class PluginPrinterService : public cs2s::plugin::PluginService
 {
 protected:
     cs2s::plugin::service::PluginLibraryService* libraries;
+
     cs2s::plugin::service::Library server{};
-    decltype(UTIL_ClientPrintAll)* client_print{nullptr};
+
+public:
+    decltype(ClientPrint)* client_print{nullptr};
     decltype(UTIL_ClientPrintAll)* client_print_all{nullptr};
 
 public:
@@ -71,13 +74,25 @@ public:
 
 public:
     template<typename... Args>
-    void Print(void* player, int hud, const char* fmt, Args&&... args)
+    void Print(CEntityInstance* player, int hud, const char* fmt, Args&&... args) const
     {
+        std::string buffer;
+        if (!format(buffer, fmt, std::forward<Args>(args)...))
+        {
+            Log_Error(this->log, PRINTER_LOG_PREFIX "Failed to interpolate format: %s\n", fmt);
+            return;
+        }
 
+        this->client_print(player, hud, buffer.c_str(), nullptr, nullptr, nullptr, nullptr);
+    }
+
+    void Print(CEntityInstance* player, int hud, const char* fmt) const
+    {
+        this->client_print(player, hud, fmt, nullptr, nullptr, nullptr, nullptr);
     }
 
     template<typename... Args>
-    void Print(int hud, const char* fmt, Args&&... args)
+    void Print(int hud, const char* fmt, Args&&... args) const
     {
         std::string buffer;
         if (!format(buffer, fmt, std::forward<Args>(args)...))
@@ -87,5 +102,10 @@ public:
         }
 
         this->client_print_all(hud, buffer.c_str(), nullptr, nullptr, nullptr, nullptr);
+    }
+
+    void Print(int hud, const char* fmt) const
+    {
+        this->client_print_all(hud, fmt, nullptr, nullptr, nullptr, nullptr);
     }
 };

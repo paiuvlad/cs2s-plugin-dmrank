@@ -1,7 +1,5 @@
 #pragma once
 
-// https://github.com/abseil/abseil-cpp/issues/1554
-// #include <absl/container/flat_hash_set.h>
 #include <unordered_set>
 
 #include <engine/igameeventsystem.h>

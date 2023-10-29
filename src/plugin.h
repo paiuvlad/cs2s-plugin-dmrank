@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utility>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@
 
 #include <cs2s/plugin/service/library.h>
 #include <cs2s/plugin/service/event.h>
+#include <cs2s/plugin/service/http.h>
 
 #include "events.h"
 #include "printer.h"
@@ -61,13 +63,16 @@ private:
     LoggingChannelID_t log;
     ISmmAPI* metamod{nullptr};
 
+    bool watch{false};
+
     // Services
     cs2s::plugin::service::PluginLibraryService libraries;
     cs2s::plugin::service::PluginEventService events;
+    cs2s::plugin::service::PluginHttpService http;
     PluginPrinterService print;
 
-    // Reversed
-    decltype(UTIL_ClientPrintAll)* client_print_all{nullptr};
+    // Interfaces
+    IVEngineServer2* engine_server{nullptr};
 
     // Config
     struct {
@@ -108,6 +113,9 @@ private:
         };
     } config;
 
+    // Requests buffer
+    std::vector<std::unique_ptr<CCallResult<Plugin, HTTPRequestCompleted_t>>> requests{};
+
     // Tracking (connected, Player)
     size_t players_count{0};
     std::pair<bool, Player> players[ABSOLUTE_PLAYER_LIMIT]{};  // Goes at the end since it's relatively large
@@ -138,6 +146,8 @@ public:
 private:
     void GetPlayer(Player& player);
     void PostPlayer(Player& player);
+    void HandleGetPlayer(HTTPRequestCompleted_t* response, bool failed);
+//    void HandlePostPlayer();
 
     void PlayerConnect(IGameEvent* event);
     void PlayerInfo(IGameEvent* event);

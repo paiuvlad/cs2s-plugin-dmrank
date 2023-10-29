@@ -10,7 +10,7 @@
 namespace cs2s::plugin::service
 {
 
-void* Library::Match(const uint8_t* pattern_data, size_t pattern_size) const
+void* Library::Resolve(const uint8_t* pattern_data, size_t pattern_size) const
 {
     auto blob = reinterpret_cast<uint8_t*>(this->address);
     for (size_t blob_cursor{0}; blob_cursor + pattern_size < this->size; ++blob_cursor)

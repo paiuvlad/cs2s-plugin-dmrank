@@ -3,14 +3,16 @@
 #include <string>
 #include <utility>
 
+#include <tier0/logging.h>
+
 #include <ISmmPlugin.h>
 #include <metamod_oslink.h>
 
 #include "cs2s/plugin/service.h"
 
 #ifdef WIN32
-#define ROOT_BIN_DIRECTORY "/bin/win64"
-#define GAME_BIN_DIRECTORY "/csgo/bin/win64"
+#define ROOT_BIN_DIRECTORY "/bin/win64/"
+#define GAME_BIN_DIRECTORY "/csgo/bin/win64/"
 #define LIBRARY_PREFIX ""
 #define LIBRARY_SUFFIX ".dll"
 #else
@@ -32,28 +34,44 @@ struct Pattern
     size_t size;
 };
 
+template<typename T>
+struct Symbol
+{
+    const char* name;
+};
+
 // Wraps introspection for shared libraries
 struct Library
 {
     std::string path;
     std::string name;
-    HINSTANCE handle;
-    void* address;
-    size_t size;
+    HINSTANCE handle{nullptr};
+    void* address{nullptr};
+    size_t size{0};
 
 public:
     ~Library()
     {
-        dlclose(this->handle);
+        if (this->handle != nullptr)
+        {
+            dlclose(this->handle);
+            this->handle = nullptr;
+        }
     }
 
 public:
-    void* Match(const uint8_t* pattern_data, size_t pattern_size) const;
+    void* Resolve(const uint8_t* pattern_data, size_t pattern_size) const;
 
     template<typename T>
-    T* Match(const Pattern<T>& pattern) const
+    T* Resolve(const Pattern<T>& pattern) const
     {
-        return reinterpret_cast<T*>(this->Match(pattern.data, pattern.size));
+        return reinterpret_cast<T*>(this->Resolve(pattern.data, pattern.size));
+    }
+
+    template<typename T>
+    T* Resolve(const Symbol<T>& symbol) const
+    {
+        return reinterpret_cast<T*>(dlsym(this->handle, symbol.name));
     }
 };
 
