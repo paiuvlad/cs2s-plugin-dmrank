@@ -138,10 +138,6 @@ private:
     cs2s::plugin::service::PluginHttpService http;
     PluginPrinterService print;
 
-    // Interfaces
-    IVEngineServer2* engine_server{nullptr};
-    CGameEntitySystem* game_entity_system{nullptr};
-
     // Config
     PluginConfig config;
 

@@ -64,51 +64,6 @@ bool Plugin::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool l
     SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIActivated, false);
     SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIDeactivated, false);
 
-    void* game_resource_service_server;
-    GET_V_IFACE_ANY(GetEngineFactory, game_resource_service_server, void*, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
-    if (!game_resource_service_server)
-    {
-        ismm->Format(error, maxlen, "failed to resolve " GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
-        return false;
-    }
-
-
-//    cs2s::plugin::service::Library engine_library;
-//    if (!this->libraries.Resolve(ROOT_BIN_DIRECTORY, "engine2", &engine_library))
-//    {
-//        ismm->Format(error, maxlen, "failed to resolve engine2 module");
-//        return false;
-//    }
-//
-//    auto create_interface = engine_library.Resolve(cs2s::plugin::service::Symbol<decltype(CreateInterface)>{"CreateInterface"});
-//    if (!create_interface)
-//    {
-//        ismm->Format(error, maxlen, "failed to resolve engine2::CreateInterface");
-//        return false;
-//    }
-//
-//    game_resource_service_server = create_interface(GAMERESOURCESERVICESERVER_INTERFACE_VERSION, nullptr);
-//    if (!game_resource_service_server)
-//    {
-//        ismm->Format(error, maxlen, "failed to resolve " GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
-//        return false;
-//    }
-
-#ifdef WIN32
-#define GAME_ENTITY_SYSTEM_OFFSET 88
-#else
-#define GAME_ENTITY_SYSTEM_OFFSET 80
-#endif
-    this->game_entity_system = *reinterpret_cast<CGameEntitySystem**>(
-        reinterpret_cast<uintptr_t>(game_resource_service_server) + GAME_ENTITY_SYSTEM_OFFSET
-    );
-    if (!this->game_entity_system)
-    {
-        ismm->Format(error, maxlen, "failed to resolve a CGameEntitySystem");
-        return false;
-    }
-    Log_Msg(this->log, LOG_PREFIX "Got game entity system %p\n", this->game_entity_system);
-
     this->events.Subscribe("player_connect", this);
     this->events.Subscribe("player_disconnect", this);
     this->events.Subscribe("player_info", this);
