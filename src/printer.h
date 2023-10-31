@@ -39,6 +39,23 @@ void UTIL_ClientPrintAll(
     const char* param4 = nullptr
 );
 
+// https://github.com/NapasP/advertising/blob/main/colors/colors.h
+#define CHAT_DEFAULT "\x01"
+#define CHAT_RED "\x02"
+#define CHAT_LIGHTPURPLE "\x03"
+#define CHAT_GREEN "\x04"
+#define CHAT_LIME "\x05"
+#define CHAT_LIGHTGREEN "\x06"
+#define CHAT_LIGHTRED "\x07"
+#define CHAT_GRAY "\x08"
+#define CHAT_LIGHTOLIVE "\x09"
+#define CHAT_OLIVE "\x10"
+#define CHAT_LIGHTBLUE "\x0B"
+#define CHAT_BLUE "\x0C"
+#define CHAT_PURPLE "\x0E"
+#define CHAT_GRAYBLUE "\x0A"
+#define CHAT_NEWLINE "\xe2\x80\xa9"
+
 template<typename... Args>
 bool format(std::string& into, const char* fmt, Args&&... args)
 {

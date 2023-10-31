@@ -64,6 +64,51 @@ bool Plugin::Load(PluginId id, ISmmAPI* ismm, char* error, size_t maxlen, bool l
     SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIActivated, false);
     SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, &this->http, &cs2s::plugin::service::PluginHttpService::GameServerSteamAPIDeactivated, false);
 
+    void* game_resource_service_server;
+    GET_V_IFACE_ANY(GetEngineFactory, game_resource_service_server, void*, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
+    if (!game_resource_service_server)
+    {
+        ismm->Format(error, maxlen, "failed to resolve " GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
+        return false;
+    }
+
+
+//    cs2s::plugin::service::Library engine_library;
+//    if (!this->libraries.Resolve(ROOT_BIN_DIRECTORY, "engine2", &engine_library))
+//    {
+//        ismm->Format(error, maxlen, "failed to resolve engine2 module");
+//        return false;
+//    }
+//
+//    auto create_interface = engine_library.Resolve(cs2s::plugin::service::Symbol<decltype(CreateInterface)>{"CreateInterface"});
+//    if (!create_interface)
+//    {
+//        ismm->Format(error, maxlen, "failed to resolve engine2::CreateInterface");
+//        return false;
+//    }
+//
+//    game_resource_service_server = create_interface(GAMERESOURCESERVICESERVER_INTERFACE_VERSION, nullptr);
+//    if (!game_resource_service_server)
+//    {
+//        ismm->Format(error, maxlen, "failed to resolve " GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
+//        return false;
+//    }
+
+#ifdef WIN32
+#define GAME_ENTITY_SYSTEM_OFFSET 88
+#else
+#define GAME_ENTITY_SYSTEM_OFFSET 80
+#endif
+    this->game_entity_system = *reinterpret_cast<CGameEntitySystem**>(
+        reinterpret_cast<uintptr_t>(game_resource_service_server) + GAME_ENTITY_SYSTEM_OFFSET
+    );
+    if (!this->game_entity_system)
+    {
+        ismm->Format(error, maxlen, "failed to resolve a CGameEntitySystem");
+        return false;
+    }
+    Log_Msg(this->log, LOG_PREFIX "Got game entity system %p\n", this->game_entity_system);
+
     this->events.Subscribe("player_connect", this);
     this->events.Subscribe("player_disconnect", this);
     this->events.Subscribe("player_info", this);
@@ -91,28 +136,28 @@ bool Plugin::Unload(char* error, size_t maxlen)
 
 void Plugin::GetPlayer(Player& player)
 {
-    if (player.bot)
-    {
-        return;
-    }
-
-    ISteamHTTP* steam_http = this->http.Get();
-    if (steam_http == nullptr) {
-        Log_Error(this->log, LOG_PREFIX "Cannot request player, Steam API not activated!\n");
-        return;
-    }
-
-    HTTPRequestHandle request = steam_http->CreateHTTPRequest(k_EHTTPMethodGET, "https://google.com");
-    SteamAPICall_t call;
-    steam_http->SendHTTPRequest(request, &call);
-    auto callback = std::make_unique<CCallResult<Plugin, HTTPRequestCompleted_t>>();
-    callback->Set(call, this, &Plugin::HandleGetPlayer);
-    this->requests.emplace_back(std::move(callback));
+//    if (player.bot)
+//    {
+//        return;
+//    }
+//
+//    ISteamHTTP* steam_http = this->http.Get();
+//    if (steam_http == nullptr) {
+//        Log_Error(this->log, LOG_PREFIX "Cannot request player, Steam API not activated!\n");
+//        return;
+//    }
+//
+//    HTTPRequestHandle request = steam_http->CreateHTTPRequest(k_EHTTPMethodGET, "https://google.com");
+//    SteamAPICall_t call;
+//    steam_http->SendHTTPRequest(request, &call);
+//    auto callback = std::make_unique<CCallResult<Plugin, HTTPRequestCompleted_t>>();
+//    callback->Set(call, this, &Plugin::HandleGetPlayer);
+//    this->requests.emplace_back(std::move(callback));
 }
 
 void Plugin::HandleGetPlayer(HTTPRequestCompleted_t* response, bool failed)
 {
-    Log_Msg(this->log, LOG_PREFIX "Got response! %s\n", failed ? "failed" : "succeeded");
+//    Log_Msg(this->log, LOG_PREFIX "Got response! %s\n", failed ? "failed" : "succeeded");
 }
 
 void Plugin::PostPlayer(Player& player)
@@ -168,9 +213,16 @@ void Plugin::PlayerConnect(IGameEvent* event)
     player.name = event->GetString(name_symbol);
     player.steam_id = event->GetUint64(steamid_symbol);
     player.bot = event->GetBool(bot_symbol);
+//    player.controller = this->game_entity_system->GetBaseEntity(CEntityIndex(player_slot + 1));
     this->GetPlayer(player);
 
-    Log_Msg(this->log, LOG_PREFIX "Connected player %d as %s\n", player_slot, player.name.c_str());
+    Log_Msg(
+        this->log,
+        LOG_PREFIX "Connected player %d as %s (controller %p)\n",
+        player_slot,
+        player.name.c_str(),
+        player.controller
+    );
 }
 
 void Plugin::PlayerInfo(IGameEvent* event)
@@ -256,18 +308,10 @@ void Plugin::PlayerDeath(IGameEvent* event)
 
     float points;
 
-    // If the player killed a bot, they should receive a fixed number of points
-    if (target.bot)
+    // Number of points is fixed if killing or killed by a bot
+    if (target.bot || attacker.bot)
     {
-        attacker.points += std::ceil(this->config.points_kill_bot);
-        return;
-    }
-
-    // If the player was killed by a bot, they should lose a fixed number of points
-    if (attacker.bot)
-    {
-        attacker.points += std::ceil(this->config.points_kill_bot);
-        return;
+        points = this->config.points_kill_bot;
     }
 
     // If they kill another player, use the rating system
@@ -287,62 +331,86 @@ void Plugin::PlayerDeath(IGameEvent* event)
         {
             points *= this->config.points_knife_multiplier;
         }
-    }
 
-    // Adjust points for player count
-    if (this->players_count < this->config.points_low_player_count)
-    {
-        points *= this->config.points_low_player_count_multiplier;
-    }
+        // Adjust points for player count
+        if (this->players_count < this->config.points_low_player_count)
+        {
+            points *= this->config.points_low_player_count_multiplier;
+        }
 
-    // Clamp the total number of points gained within the bounds
-    points = std::clamp(points, this->config.points_gain_minimum, this->config.points_gain_maximum);
+        // Clamp the total number of points gained within the bounds
+        points = std::clamp(points, this->config.points_gain_minimum, this->config.points_gain_maximum);
+    }
 
     // Apply the points to the target
-    float points_lost_exact = points * this->config.points_death_multiplier;
-    Points points_lost = std::ceil(points_lost_exact);  // Avoids an additional static_cast
-    target.points = std::max(target.points - points_lost, 0);
+    if (!target.bot)
+    {
+        float points_lost_exact = points * this->config.points_death_multiplier;
+        Points points_lost = std::ceil(points_lost_exact);  // Avoids an additional static_cast
+        target.points = std::max(target.points - points_lost, 0);
+
+        // Send target message
+        this->print.Print(
+            event->GetPlayerController(userid_symbol),
+            HUD_PRINTTALK,
+            CHAT_DEFAULT "[rankWS] " CHAT_RED "-%u points (%u)" CHAT_DEFAULT " - attacker: %s\n",
+            points_lost,
+            target.points,
+            attacker.name.c_str()
+        );
+    }
 
     // Apply points to attacker
-    float points_gained_exact = points;
-    if (unranked)
+    if (!attacker.bot)
     {
-        points_gained_exact *= this->config.points_unranked_multiplier;
+        float points_gained_exact = points;
+        if (unranked)
+        {
+            points_gained_exact *= this->config.points_unranked_multiplier;
+        }
+        Points points_gained = std::ceil(points_gained_exact);
+        attacker.points += points_gained;
+
+        // Send attacker message
+        const char* killstreak_message = this->config.get_kill_streak(attacker.life.kills);
+        if (killstreak_message)
+        {
+            this->print.Print(
+                event->GetPlayerController(attacker_symbol),
+                HUD_PRINTTALK,
+                CHAT_DEFAULT "[rankWS] " CHAT_GREEN "+%u points (%u)" CHAT_DEFAULT " - %s\n",
+                points_gained,
+                attacker.points,
+                killstreak_message
+            );
+        }
+        else if (headshot)
+        {
+            this->print.Print(
+                event->GetPlayerController(attacker_symbol),
+                HUD_PRINTTALK,
+                CHAT_DEFAULT "[rankWS] " CHAT_GREEN "+%u points (%u)" CHAT_DEFAULT " - " CHAT_BLUE "headshot" CHAT_DEFAULT ": %s\n",
+                points_gained,
+                attacker.points,
+                target.name.c_str()
+            );
+        }
+        else
+        {
+            this->print.Print(
+                event->GetPlayerController(attacker_symbol),
+                HUD_PRINTTALK,
+                CHAT_DEFAULT "[rankWS] " CHAT_GREEN "+%u points (%u)" CHAT_DEFAULT " - killed: %s\n",
+                points_gained,
+                attacker.points,
+                target.name.c_str()
+            );
+        }
     }
-    Points points_gained = std::ceil(points_gained_exact);
-    attacker.points += points_gained;
-
-    std::string message = (
-        LOG_PREFIX " " +
-        attacker.name + " +" + std::to_string(points_gained) +
-        target.name + " -" + std::to_string(points_lost)
-    );
 }
-
-struct RecipientFilter : public IRecipientFilter
-{
-    std::vector<int> player_slots;
-
-    [[nodiscard]] bool IsReliable() const override { return true; };
-    [[nodiscard]] bool IsInitMessage() const override { return false; };
-
-    [[nodiscard]] int	GetRecipientCount() const override { return this->player_slots.size(); };
-    [[nodiscard]] CPlayerSlot GetRecipientIndex(int slot) const override { return this->player_slots[slot]; };
-};
 
 void Plugin::WeaponFire(IGameEvent* event)
 {
     int player_slot = event->GetPlayerSlot(userid_symbol).Get();
     auto& [player_connected, player] = this->players[player_slot];
-
-    auto controller = event->GetPlayerController(userid_symbol);
-    auto pawn = event->GetPlayerPawn(userid_symbol);
-    Log_Msg(this->log, LOG_PREFIX "Fire weapon! %p %p\n", controller, pawn);
-
-    RecipientFilter rf{};
-    rf.player_slots.emplace_back(player_slot);
-
-    this->print.client_print_all(HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
-    this->print.client_print(controller, HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
-    this->print.client_print(pawn, HUD_PRINTTALK, "first", "second", "third", "fourth", "fifth");
 }

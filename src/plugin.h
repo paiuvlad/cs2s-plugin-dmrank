@@ -9,6 +9,7 @@
 #include <const.h>
 #include <engine/igameeventsystem.h>
 #include <igameevents.h>
+#include <entity2/entitysystem.h>
 
 #include <ISmmPlugin.h>
 
@@ -22,39 +23,105 @@
 // This type must be signed or else 0 clamp checks won't work, e.g. std::max(points - x, 0)
 using Points = int32_t;
 
+struct PlayerLife
+{
+    uint32_t kills{0};
+};
+
+struct PlayerSession
+{
+    Points points_initial{0};  // TODO
+    uint32_t kills{0};
+    uint32_t kills_headshot{0};
+    uint32_t deaths{0};
+    uint32_t bullets_fired_rifle{0};  // TODO
+    uint32_t bullets_fired_sniper{0};  // TODO
+    uint32_t bullets_fired_smg{0};  // TODO
+    uint32_t bullets_fired_deagle{0};  // TODO
+    uint32_t bullets_fired_pistol{0};  // TODO
+    uint32_t bullets_hit_rifle{0};  // TODO
+    uint32_t bullets_hit_sniper{0};  // TODO
+    uint32_t bullets_hit_smg{0};  // TODO
+    uint32_t bullets_hit_deagle{0};  // TODO
+    uint32_t bullets_hit_pistol{0};  // TODO
+};
+
 struct Player
 {
     // Intrinsic
     std::string name;
     uint64_t steam_id{0};
     bool bot{false};
+    void* controller{nullptr};
 
     // Plugin
     bool vip{false};  // TODO
     Points points{0};
 
-    struct
-    {
-        uint32_t kills{0};
-    } life;
+    PlayerLife life;
+    PlayerSession session;
+};
 
-    struct
+struct PluginConfigKillStreak
+{
+    uint32_t kills;
+    const char* message;
+};
+
+struct PluginConfig
+{
+    bool enabled{true};
+
+    bool chat_points{false};  // TODO
+    bool chat_rank{false};  // TODO
+
+    float points_kill_player{5.0f};
+    float points_kill_bot{2.0f};
+    float points_headshot_bonus{1.0f};
+    float points_knife_multiplier{3.0f};
+    float points_death_multiplier{1.0f};
+    float points_gain_minimum{2.0f};
+    float points_gain_maximum{20.0f};
+    Points points_initial{1337};  // TODO
+    Points points_suicide_deduction{0};
+    uint32_t points_low_player_count{4};
+    float points_low_player_count_multiplier{0.4f};  // TODO
+    float points_unranked_multiplier{2.0f};
+
+    uint32_t rank_unranked_kills{20};  // TODO
+    bool rank_show_all{true};  // TODO
+    int rank_allow_reset{1};  // 2 VIP, 1 any, 0 none  // TODO
+
+    std::vector<PluginConfigKillStreak> kill_streaks =  {  // TODO
+        {3, "Dominating"},
+        {5, "Killingspree"},
+        {7, "Rampage"},
+        {9, "Monsterkill"},
+        {11, "Unstoppable"},
+        {13, "Ludicrous"},
+        {15, "Godlike"},
+    };
+
+    [[nodiscard]] const char* get_kill_streak(uint32_t kills) const
     {
-        Points points_initial{0};  // TODO
-        uint32_t kills{0};
-        uint32_t kills_headshot{0};
-        uint32_t deaths{0};
-        uint32_t bullets_fired_rifle{0};  // TODO
-        uint32_t bullets_fired_sniper{0};  // TODO
-        uint32_t bullets_fired_smg{0};  // TODO
-        uint32_t bullets_fired_deagle{0};  // TODO
-        uint32_t bullets_fired_pistol{0};  // TODO
-        uint32_t bullets_hit_rifle{0};  // TODO
-        uint32_t bullets_hit_sniper{0};  // TODO
-        uint32_t bullets_hit_smg{0};  // TODO
-        uint32_t bullets_hit_deagle{0};  // TODO
-        uint32_t bullets_hit_pistol{0};  // TODO
-    } session;
+        // Check if no killstreaks configured or fewer kills than first killstreak
+        if (this->kill_streaks.empty() || kills < this->kill_streaks.front().kills)
+        {
+            return nullptr;
+        }
+
+        // Iterate through killstreaks to find the first larger than `kills`
+        for (size_t i = 1; i < this->kill_streaks.size(); ++i)
+        {
+            if (kills < this->kill_streaks[i].kills)
+            {
+                return this->kill_streaks[i - 1].message;
+            }
+        }
+
+        // Return the last killstreak if we're past the bounds
+        return this->kill_streaks.back().message;
+    }
 };
 
 class Plugin final : public ISmmPlugin, public IMetamodListener, public IGameEventListener2
@@ -73,45 +140,10 @@ private:
 
     // Interfaces
     IVEngineServer2* engine_server{nullptr};
+    CGameEntitySystem* game_entity_system{nullptr};
 
     // Config
-    struct {
-        bool enabled{true};
-
-        bool chat_points{false};  // TODO
-        bool chat_rank{false};  // TODO
-
-        float points_kill_player{5.0f};
-        float points_kill_bot{2.0f};
-        float points_headshot_bonus{1.0f};
-        float points_knife_multiplier{3.0f};
-        float points_death_multiplier{1.0f};
-        float points_gain_minimum{2.0f};
-        float points_gain_maximum{20.0f};
-        Points points_initial{1337};  // TODO
-        Points points_suicide_deduction{0};
-        uint32_t points_low_player_count{4};
-        float points_low_player_count_multiplier{0.4f};  // TODO
-        float points_unranked_multiplier{2.0f};
-
-        uint32_t rank_unranked_kills{20};  // TODO
-        bool rank_show_all{true};  // TODO
-        int rank_allow_reset{1};  // 2 VIP, 1 any, 0 none  // TODO
-
-        struct
-        {
-            uint32_t kills;
-            const char* message;
-        } streaks[7] {  // TODO
-            {3, "Dominating"},
-            {5, "Killingspree"},
-            {7, "Rampage"},
-            {9, "Monsterkill"},
-            {11, "Unstoppable"},
-            {13, "Ludicrous"},
-            {15, "Godlike"},
-        };
-    } config;
+    PluginConfig config;
 
     // Requests buffer
     std::vector<std::unique_ptr<CCallResult<Plugin, HTTPRequestCompleted_t>>> requests{};
